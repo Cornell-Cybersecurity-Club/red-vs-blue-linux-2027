@@ -2,21 +2,6 @@
 
 LOG_FILE="./error_log.txt"
 
-# Function to install packages one by one
-# Usage: install_one_by_one "install_command_with_flags" package_list
-install_one_by_one() {
-  INSTALL_CMD="$1"
-  shift
-  PACKAGES="$*"
-
-  for pkg in $PACKAGES; do
-    # Execute the install command.
-    # Stdout -> Null (Silence).
-    # Stderr -> Appended to log file.
-    $INSTALL_CMD "$pkg" >/dev/null 2>>"$LOG_FILE"
-  done
-}
-
 if [ "$(id -u)" -ne 0 ]; then
   echo "This script must be run as root."
   exit 1
@@ -35,14 +20,74 @@ if [ -f /etc/os-release ]; then
     echo "Step 1: Detected Debian/Ubuntu-based system..."
     echo "Step 2: Updating package lists..."
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq >/dev/null 2>>"$LOG_FILE"
 
-    DEB_PKGS="apparmor apparmor-utils apt audispd-plugins auditd bash busybox ca-certificates chrootkit coreutils curl dash debsums git gnupg htop iotop iptables iptables-persistent libc6 libpam-modules libpam-pwquality libpam-tmpdir lsof lynis nano needrestart net-tools nmap openssh-server openssl passwd pigz polkitd rkhunter rsyslog sudo sysstat tcpdump unhide unzip util-linux vim wget zstd"
+    apt-get update --quiet
+    apt-get upgrade --quiet
 
     echo "Step 3: Installing packages..."
-    # -y: Answer yes
-    # -q: Quiet
-    install_one_by_one "apt-get install -y -q" $DEB_PKGS
+    apt-get install --yes --ignore-missing --quiet \
+      apparmor \
+      apparmor-utils \
+      apt \
+      audispd-plugins \
+      audit \
+      audit-libs \
+      auditd \
+      automake \
+      bash \
+      busybox \
+      ca-certificates \
+      chrootkit \
+      coreutils \
+      curl \
+      dash \
+      debsums \
+      dpkg \
+      gcc \
+      git \
+      gnupg \
+      gnupg2 \
+      htop \
+      iotop \
+      iptables \
+      iptables-persistent \
+      iptables-services \
+      libc6 \
+      libpam-modules \
+      libpam-pwquality \
+      libpam-tmpdir \
+      libpwquality \
+      libtool \
+      lsof \
+      lynis \
+      make \
+      micro \
+      nano \
+      needrestart \
+      net-tools \
+      nmap \
+      openssh-server \
+      openssl \
+      passwd \
+      pigz \
+      pkg-config \
+      polkitd \
+      rkhunter \
+      rsyslog \
+      rsyslog \
+      setools-console \
+      sudo \
+      sysstat \
+      tcpdump \
+      unhide \
+      unzip \
+      util-linux \
+      vim \
+      wget \
+      wireshark \
+      yara \
+      yum-utils \
+      zstd
     ;;
 
   *rocky* | *rhel* | *fedora* | *centos* | *alma* | *ol* | *amzn* | *cloudlinux*)
@@ -57,16 +102,76 @@ if [ -f /etc/os-release ]; then
     echo "Step 2: Preparing repositories..."
     if ! grep -q "Amazon Linux" /etc/os-release; then
       # -y: Answer yes
-      $PKG_MGR install -y epel-release >/dev/null 2>>"$LOG_FILE"
+      "${PKG_MGR}" install --assumeyes --quiet epel-release
     fi
 
-    $PKG_MGR makecache >/dev/null 2>>"$LOG_FILE"
-
-    RHEL_PKGS="audit audit-libs bash busybox ca-certificates chrootkit coreutils curl dash dpkg git glibc gnupg2 htop iptables iptables-services libpwquality lsof lynis nano net-tools nmap openssh-server openssl passwd pigz policycoreutils python3 rkhunter rsyslog setools-console sudo sysstat tcpdump unhide unzip util-linux vim wget yum-utils zstd"
+    "${PKG_MGR}" makecache
 
     echo "Step 3: Installing packages..."
-    # -y: Answer yes automatically
-    install_one_by_one "$PKG_MGR install -y" $RHEL_PKGS
+
+    "${PKG_MGR}" install --assumeyes --skip-broken --quiet \
+      apparmor \
+      apparmor-utils \
+      apt \
+      audispd-plugins \
+      audit \
+      audit-libs \
+      auditd \
+      automake \
+      bash \
+      busybox \
+      ca-certificates \
+      chrootkit \
+      coreutils \
+      curl \
+      dash \
+      debsums \
+      dpkg \
+      gcc \
+      git \
+      gnupg \
+      gnupg2 \
+      htop \
+      iotop \
+      iptables \
+      iptables-persistent \
+      iptables-services \
+      libc6 \
+      libpam-modules \
+      libpam-pwquality \
+      libpam-tmpdir \
+      libpwquality \
+      libtool \
+      lsof \
+      lynis \
+      make \
+      micro \
+      nano \
+      needrestart \
+      net-tools \
+      nmap \
+      openssh-server \
+      openssl \
+      passwd \
+      pigz \
+      pkg-config \
+      polkitd \
+      rkhunter \
+      rsyslog \
+      rsyslog \
+      setools-console \
+      sudo \
+      sysstat \
+      tcpdump \
+      unhide \
+      unzip \
+      util-linux \
+      vim \
+      wget \
+      wireshark \
+      yara \
+      yum-utils \
+      zstd
     ;;
 
   *alpine*)
@@ -78,7 +183,7 @@ if [ -f /etc/os-release ]; then
 
     echo "Step 3: Installing packages..."
     # apk add is generally non-interactive by default for known packages
-    install_one_by_one "apk add" $ALPINE_PKGS
+    apk add $ALPINE_PKGS
     ;;
 
   *suse* | *sles*)
@@ -92,7 +197,7 @@ if [ -f /etc/os-release ]; then
     echo "Step 3: Installing packages..."
     # -n: Non-interactive
     # -y: Yes
-    install_one_by_one "zypper --non-interactive install -y" $SUSE_PKGS
+    zypper --non-interactive install -y $SUSE_PKGS
     ;;
 
   *arch* | *manjaro*)
@@ -106,7 +211,7 @@ if [ -f /etc/os-release ]; then
     echo "Step 3: Installing packages..."
     # --noconfirm: Answer yes to all
     # --needed: Don't reinstall up-to-date packages
-    install_one_by_one "pacman -S --noconfirm --needed" $ARCH_PKGS
+    pacman -S --noconfirm --needed $ARCH_PKGS
     ;;
 
   *)
