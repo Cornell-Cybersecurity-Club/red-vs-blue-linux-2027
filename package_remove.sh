@@ -1,7 +1,5 @@
 #!/bin/sh
 
-LOG_FILE="./error_log.txt"
-
 if [ "$(id -u)" -ne 0 ]; then
   echo "This script must be run as root."
   exit 1
@@ -16,15 +14,14 @@ if [ -f /etc/os-release ]; then
   ID_MATCH="${ID_LIKE:-$ID}"
 
   case "$ID_MATCH" in
-  *debian* | *ubuntu* | *devuan* | *kali* | *raspbian* | *linuxmint* | *pop*)
+  *debian* | *ubuntu* | *devuan* | *kali* | *raspbian*)
     echo "Step 1: Detected Debian/Ubuntu family..."
     export DEBIAN_FRONTEND=noninteractive
 
     echo "Step 2: Updating package lists..."
-    apt-get update -q >/dev/null 2>>"$LOG_FILE"
+    apt-get update -q
 
     echo "Step 3: Purging insecure packages..."
-    # Redirect output of the multiline command at the end
     apt-get purge -y \
       autofs \
       ftp \
@@ -32,7 +29,7 @@ if [ -f /etc/os-release ]; then
       nis \
       rsh-client \
       talk \
-      telnet >/dev/null 2>>"$LOG_FILE"
+      telnet
     ;;
 
   *rocky* | *rhel* | *fedora* | *centos* | *alma*)
@@ -52,29 +49,27 @@ if [ -f /etc/os-release ]; then
       nis \
       rsh-client \
       talk \
-      telnet >/dev/null 2>>"$LOG_FILE"
+      telnet
     ;;
 
   *alpine*)
     echo "Step 1: Detected Alpine Linux..."
 
     echo "Step 2: Updating package index..."
-    apk update >/dev/null 2>>"$LOG_FILE"
+    apk update
 
     echo "Step 3: Removing insecure packages..."
-    # Alpine is usually non-interactive by default for deletions
     apk del \
       autofs \
       ftp \
       nis \
       rsh-client \
       talk \
-      telnet >/dev/null 2>>"$LOG_FILE"
+      telnet
     ;;
 
   *)
-    echo "Error: Distro not supported."
-    echo "Unsupported distro: $ID_MATCH" >>"$LOG_FILE"
+    echo "Could not remove packages: distro not supported."
     exit 1
     ;;
   esac
