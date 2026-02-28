@@ -1,22 +1,20 @@
 #!/bin/sh
 
-exec 2>>error_log.txt
-
 # Exit immediately if a variable is used before being set (prevents "rm -rf /" accidents due to typos)
 set -u
 
 # 1. Root Privilege Check
 # The script modifies system files in /etc/, so it requires root permissions.
 if [ "$(id -u)" -ne 0 ]; then
-  echo "Error: This script must be run as root." >&2
+  echo "Error: This script must be run as root."
   exit 1
 fi
 
 # 2. Dependency Check
 # Checks if the 'dconf' binary exists. If the system is headless (no GUI)
 # or doesn't use GNOME, we exit cleanly instead of trying to install things.
-if ! command -v dconf >/dev/null 2>&1; then
-  echo "dconf not installed" >&2
+if ! command -v dconf; then
+  echo "dconf not installed"
   exit 0
 fi
 

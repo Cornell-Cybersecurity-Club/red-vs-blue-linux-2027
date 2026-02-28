@@ -1,118 +1,141 @@
 #!/bin/sh
+# ==============================================================================
+# Audit Configuration Script
+# Supports: Linux (auditd), Solaris (BSM audit)
+# ==============================================================================
 
-LOG_FILE="./error_log.txt"
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+log_info() { printf "\033[0;32m[INFO]\033[0m %s\n" "$1"; }
+log_warn() { printf "\033[0;33m[WARN]\033[0m %s\n" "$1"; }
+log_err() { printf "\033[0;31m[ERROR]\033[0m %s\n" "$1" >&2; }
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "This script must be run as root."
+  log_err "This script must be run as root."
   exit 1
 fi
 
-echo "Starting auditd configuration..."
+# Detect OS
+OS_TYPE="linux"
+case "$(uname -s)" in
+SunOS) OS_TYPE="solaris" ;;
+esac
 
-echo "Step 1: Creating audit directory..."
-# Create directory. Stdout -> Null. Stderr -> Appended to log file.
-mkdir -p /etc/audit >/dev/null 2>>"$LOG_FILE"
-
-echo "Step 2: Copying configuration files..."
-# Copy auditd.conf.
-# Any error (file not found, or permission denied writing target) goes to log.
-cat configs/auditd.conf >/etc/audit/auditd.conf 2>>"$LOG_FILE"
-
-# Copy audit.rules.
-cat configs/audit.rules >/etc/audit/audit.rules 2>>"$LOG_FILE"
-
-echo "Step 3: Enabling auditd..."
-# Check if auditctl exists silently
-if command -v auditctl >/dev/null 2>&1; then
-  # Enable audit system (-e 1). Stdout -> Null. Stderr -> Appended to log file.
-  auditctl -e 1 >/dev/null 2>>"$LOG_FILE"
-fi
-
-SERVICE="auditd"
-
-# Helper to log status
-log_info() { printf "\033[0;32m[INFO]\033[0m %s\n" "$1"; }
-log_err() { printf "\033[0;31m[ERROR]\033[0m %s\n" "$1" >&2; }
-
-# ------------------------------------------------------------------------------
-# 1. Systemd Logic
-# ------------------------------------------------------------------------------
-if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-  log_info "Detected Init System: Systemd"
-
-  # 1. Enable on boot
-  log_info "Enabling $SERVICE service..."
-  if systemctl enable "$SERVICE" >/dev/null 2>&1; then
-    : # Do nothing on success
-  else
-    log_err "Failed to enable $SERVICE (Systemd)."
-  fi
-
-  # 2. Restart / Reload
-  # Note: auditd often refuses a hard 'restart' via systemctl.
-  # We try 'reload' first (which reloads config), then fallback to 'restart'.
-  log_info "Restarting/Reloading $SERVICE..."
-
-  if systemctl is-active "$SERVICE" >/dev/null 2>&1; then
-    # Try reload first (safer for auditd)
-    if ! systemctl reload "$SERVICE" >/dev/null 2>&1; then
-      # If reload fails, try hard restart
-      systemctl restart "$SERVICE" >/dev/null 2>&1
-    fi
-  else
-    # Not running, just start it
-    systemctl start "$SERVICE" >/dev/null 2>&1
-  fi
-
-# ------------------------------------------------------------------------------
-# 2. OpenRC Logic (Alpine / Gentoo)
-# ------------------------------------------------------------------------------
-elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
-  log_info "Detected Init System: OpenRC"
-
-  # 1. Enable on boot
-  # We try 'default', if that fails (some setups use 'boot'), we warn.
-  log_info "Adding $SERVICE to default runlevel..."
-  if rc-update add "$SERVICE" default >/dev/null 2>&1; then
-    :
-  else
-    log_err "Failed to add $SERVICE to runlevel (OpenRC)."
-  fi
-
-  # 2. Restart
-  log_info "Restarting $SERVICE..."
-  rc-service "$SERVICE" restart >/dev/null 2>&1
-
-# ------------------------------------------------------------------------------
-# 3. SysVinit Fallback (Legacy)
-# ------------------------------------------------------------------------------
-elif [ -x "/etc/init.d/$SERVICE" ]; then
-  log_info "Detected Init System: SysVinit (Legacy)"
-
-  # Enable (Distro specific, simplistic attempt)
-  if command -v update-rc.d >/dev/null 2>&1; then
-    update-rc.d "$SERVICE" defaults >/dev/null 2>&1
-  elif command -v chkconfig >/dev/null 2>&1; then
-    chkconfig "$SERVICE" on >/dev/null 2>&1
-  fi
-
-  # Restart
-  "/etc/init.d/$SERVICE" restart >/dev/null 2>&1
-
+# Detect init system
+if [ -d /run/systemd/system ]; then
+  INIT_SYS="systemd"
+elif command -v svcadm >/dev/null 2>&1; then
+  INIT_SYS="smf"
+elif command -v rc-service >/dev/null 2>&1; then
+  INIT_SYS="openrc"
 else
-  log_err "Could not detect Systemd or OpenRC."
+  INIT_SYS="sysv"
 fi
 
-# ------------------------------------------------------------------------------
-# 4. Kernel Level Enforcement (Safety Net)
-# ------------------------------------------------------------------------------
-# Even if the service manager failed, we tell the kernel specifically to enable auditing.
-if command -v auditctl >/dev/null 2>&1; then
-  log_info "Enforcing audit enabled via auditctl..."
-  # -e 1: Enable auditing
-  auditctl -e 1 >/dev/null 2>&1
-fi
+log_info "Starting audit configuration..."
+log_info "Detected: $OS_TYPE / $INIT_SYS"
 
-log_info "Audit configuration complete."
+# ==============================================================================
+# SOLARIS BSM AUDIT
+# ==============================================================================
+configure_solaris_audit() {
+  log_info "Configuring Solaris BSM Audit..."
 
-echo "Finished auditd configuration."
+  AUDIT_CONTROL="/etc/security/audit_control"
+
+  [ -f "$AUDIT_CONTROL" ] && cp "$AUDIT_CONTROL" "${AUDIT_CONTROL}.bak"
+
+  cat >"$AUDIT_CONTROL" <<'EOF'
+dir:/var/audit
+flags:lo,ad,ex,fm,fw,fr
+minfree:20
+naflags:lo,ad
+plugin:name=audit_binfile.so; p_dir=/var/audit; p_fsize=4M; p_minfree=1
+EOF
+
+  chmod 640 "$AUDIT_CONTROL"
+  mkdir -p /var/audit
+  chmod 750 /var/audit
+
+  if svcs -a 2>/dev/null | grep -q "auditd"; then
+    svcadm enable system/auditd
+    svcadm refresh system/auditd
+  else
+    /usr/sbin/audit -s
+  fi
+
+  log_info "Solaris BSM audit configured"
+}
+
+# ==============================================================================
+# LINUX AUDITD
+# ==============================================================================
+configure_linux_auditd() {
+  log_info "Configuring Linux auditd..."
+
+  mkdir -p /etc/audit
+  mkdir -p /etc/audit/rules.d
+  mkdir -p /var/log/audit
+
+  # Apply configs from configs directory
+  if [ -f "$SCRIPT_DIR/configs/auditd.conf" ]; then
+    log_info "Using configs/auditd.conf"
+    cat "$SCRIPT_DIR/configs/auditd.conf" >/etc/audit/auditd.conf
+  else
+    log_err "configs/auditd.conf not found!"
+    exit 1
+  fi
+
+  if [ -f "$SCRIPT_DIR/configs/audit.rules" ]; then
+    log_info "Using configs/audit.rules"
+    cat "$SCRIPT_DIR/configs/audit.rules" >/etc/audit/audit.rules
+    cat "$SCRIPT_DIR/configs/audit.rules" >/etc/audit/rules.d/99-ccdc.rules
+  else
+    log_err "configs/audit.rules not found!"
+    exit 1
+  fi
+
+  chmod 640 /etc/audit/auditd.conf
+  chmod 640 /etc/audit/audit.rules
+  chmod 640 /etc/audit/rules.d/99-ccdc.rules
+
+  # Enable audit
+  if command -v auditctl >/dev/null 2>&1; then
+    auditctl -e 1
+    augenrules --load 2>/dev/null || auditctl -R /etc/audit/audit.rules
+  fi
+
+  # Restart service
+  case "$INIT_SYS" in
+  systemd)
+    systemctl enable auditd
+    # auditd doesn't like systemctl restart
+    service auditd restart 2>/dev/null || systemctl restart auditd
+    ;;
+  openrc)
+    rc-update add auditd default
+    rc-service auditd restart
+    ;;
+  sysv)
+    [ -x /etc/init.d/auditd ] && /etc/init.d/auditd restart
+    ;;
+  esac
+
+  log_info "Linux auditd configured"
+}
+
+# ==============================================================================
+# MAIN
+# ==============================================================================
+case "$OS_TYPE" in
+solaris)
+  configure_solaris_audit
+  ;;
+linux)
+  configure_linux_auditd
+  ;;
+esac
+
+log_info "Audit configuration complete!"
